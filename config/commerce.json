@@ -1,0 +1,14 @@
+{
+  "tiers": [
+    { "id": "bronze", "name": "برنزی",  "icon": "🥉", "rank": 1, "discountPercent": 8,  "minSpend": 0,         "requiresDocuments": false, "freeShipping": false, "isActive": true },
+    { "id": "silver", "name": "نقره‌ای", "icon": "🥈", "rank": 2, "discountPercent": 12, "minSpend": 150000000, "requiresDocuments": false, "freeShipping": false, "isActive": true },
+    { "id": "gold",   "name": "طلایی",  "icon": "🥇", "rank": 3, "discountPercent": 16, "minSpend": 600000000, "requiresDocuments": true,  "freeShipping": true,  "isActive": true }
+  ],
+  "quantityBreaks": [
+    { "minQty": 10, "extraDiscountPercent": 5 },
+    { "minQty": 50, "extraDiscountPercent": 10 }
+  ],
+  "shipping": { "flatCost": 450000, "freeOver": 10000000 },
+  "evaluationWindowDays": 180,
+  "autoDowngrade": false
+}

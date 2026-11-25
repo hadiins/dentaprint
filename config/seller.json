@@ -1,0 +1,17 @@
+{
+  "legalName": "شرکت نمونه دنتاپرینت (سهامی خاص)",
+  "brandName": "دنتاپرینت",
+  "economicCode": "",
+  "nationalId": "",
+  "registrationNo": "",
+  "address": "تهران، خیابان نمونه، پلاک ۱",
+  "postalCode": "",
+  "phone": "۰۲۱-۰۰۰۰۰۰۰۰",
+  "email": "info@example.com",
+  "website": "example.com",
+  "vatEnabled": false,
+  "vatRate": 10,
+  "pricesIncludeVat": true,
+  "currency": "IRR",
+  "footerNote": "کالای فروخته‌شده طبق شرایط مرجوعی سایت قابل بازگشت است."
+}

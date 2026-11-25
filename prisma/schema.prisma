@@ -1,0 +1,449 @@
+// طرح پایگاه دادهٔ دنتاپرینت — همهٔ مبالغ به تومان (BigInt)
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  CUSTOMER
+  PARTNER
+  ADMIN
+}
+
+enum PartnerStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  SUSPENDED
+}
+
+/// NONE: فقط درخواست داده | BASIC: هویت و محل کار تأیید شده (بدون پروانه) | DOCUMENTS: پروانه یا کد اقتصادی تأیید شده
+enum VerificationLevel {
+  NONE
+  BASIC
+  DOCUMENTS
+}
+
+enum BusinessType {
+  LAB
+  CLINIC
+  RESELLER
+  EDUCATION
+  OTHER
+}
+
+enum DocumentKind {
+  LICENSE
+  ECONOMIC_CODE
+  NATIONAL_ID
+  WORKSPACE_PHOTO
+  SAMPLE_WORK
+  OTHER
+}
+
+enum DocumentStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+}
+
+enum ProductType {
+  RESIN
+  MATERIAL
+  EQUIPMENT
+  CONSUMABLE
+}
+
+enum OrderStatus {
+  PENDING_PAYMENT
+  PAID
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  REFUNDED
+}
+
+enum PriceMode {
+  RETAIL
+  PARTNER
+}
+
+enum PaymentStatus {
+  INITIATED
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
+model User {
+  id              String           @id @default(cuid())
+  phone           String           @unique
+  fullName        String?
+  nationalCode    String?
+  email           String?
+  role            Role             @default(CUSTOMER)
+  partner         PartnerProfile?  @relation("PartnerUser")
+  managedPartners PartnerProfile[] @relation("AccountManager")
+  orders          Order[]
+  addresses       Address[]
+  sessions        Session[]
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+}
+
+/// سطوح همکاری — توسط مدیر قابل ویرایش
+model PartnerTier {
+  id                String             @id @default(cuid())
+  slug              String             @unique
+  name              String
+  icon              String?
+  rank              Int                @unique
+  discountPercent   Int
+  /// حد خرید در بازهٔ ارزیابی (evaluationWindowDays در تنظیمات)
+  minSpend          BigInt             @default(0)
+  requiresDocuments Boolean            @default(false)
+  freeShipping      Boolean            @default(false)
+  isActive          Boolean            @default(true)
+  partners          PartnerProfile[]
+  prices            ProductTierPrice[]
+}
+
+model PartnerProfile {
+  id               String            @id @default(cuid())
+  userId           String            @unique
+  user             User              @relation("PartnerUser", fields: [userId], references: [id], onDelete: Cascade)
+  orgName          String
+  businessType     BusinessType
+  city             String
+  address          String?
+  hasLicense       Boolean           @default(false)
+  licenseNumber    String?
+  economicCode     String?
+  status           PartnerStatus     @default(PENDING)
+  verification     VerificationLevel @default(NONE)
+  tierId           String?
+  tier             PartnerTier?      @relation(fields: [tierId], references: [id])
+  /// اگر true باشد، ارتقای خودکار سطح انجام نمی‌شود
+  tierLocked       Boolean           @default(false)
+  accountManagerId String?
+  accountManager   User?             @relation("AccountManager", fields: [accountManagerId], references: [id])
+  referredById     String?
+  referredBy       PartnerProfile?   @relation("Referral", fields: [referredById], references: [id])
+  referrals        PartnerProfile[]  @relation("Referral")
+  adminNotes       String?
+  approvedAt       DateTime?
+  documents        PartnerDocument[]
+  tierHistory      TierChange[]
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  @@index([status])
+  @@index([tierId])
+}
+
+model PartnerDocument {
+  id         String         @id @default(cuid())
+  partnerId  String
+  partner    PartnerProfile @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  kind         DocumentKind
+  /// کلید در ذخیره‌ساز خصوصی (هرگز آدرس عمومی ندارد)
+  fileKey      String         @unique
+  originalName String?
+  contentType  String         @default("application/octet-stream")
+  size         Int            @default(0)
+  status       DocumentStatus @default(PENDING)
+  reviewNote   String?
+  reviewedAt   DateTime?
+  reviewedBy   String?
+  createdAt    DateTime       @default(now())
+
+  @@index([partnerId])
+}
+
+/// تاریخچهٔ تغییر سطح (برای شفافیت و گزارش)
+model TierChange {
+  id         String         @id @default(cuid())
+  partnerId  String
+  partner    PartnerProfile @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  fromTierId String?
+  toTierId   String
+  /// AUTO_SPEND یا ADMIN
+  reason     String
+  changedBy  String?
+  createdAt  DateTime       @default(now())
+
+  @@index([partnerId])
+}
+
+model Category {
+  id       String     @id @default(cuid())
+  slug     String     @unique
+  name     String
+  icon     String?
+  /// گروه اصلی: print3d | prosthetics | restorative | lab
+  group    String?
+  sort     Int        @default(0)
+  parentId String?
+  parent   Category?  @relation("CategoryTree", fields: [parentId], references: [id])
+  children Category[] @relation("CategoryTree")
+  products Product[]
+}
+
+model Product {
+  id                        String             @id @default(cuid())
+  slug                      String             @unique
+  sku                       String             @unique
+  name                      String
+  type                      ProductType
+  categoryId                String
+  category                  Category           @relation(fields: [categoryId], references: [id])
+  brand                     String?
+  icon                      String?
+  /// کد ثبت ادارهٔ کل تجهیزات پزشکی
+  irc                       String?
+  shortDescription          String?
+  description               String
+  specs                     Json
+  wavelengthNm              Int?
+  images                    ProductImage[]
+  retailPrice               BigInt
+  compareAtPrice            BigInt?
+  /// کف قیمت؛ هیچ تخفیفی قیمت را پایین‌تر از این نمی‌برد
+  minPrice                  BigInt?
+  partnerMinQty             Int                @default(1)
+  maxPartnerDiscountPercent Int?
+  stock                     Int                @default(0)
+  popularity                Int                @default(0)
+  isActive                  Boolean            @default(true)
+  /// گزینه‌های انتخابی: [{ name: 'رنگ', values: ['A1','A2'] }, ...] (حداکثر ۲)
+  options                   Json?
+  variants                  ProductVariant[]
+  tierPrices                ProductTierPrice[]
+  quantityBreaks            QuantityBreak[]
+  orderItems                OrderItem[]
+  createdAt                 DateTime           @default(now())
+  updatedAt                 DateTime           @updatedAt
+
+  @@index([categoryId])
+  @@index([type])
+}
+
+/// قیمت دستی یک محصول برای یک سطح خاص (اختیاری)
+model ProductTierPrice {
+  id        String      @id @default(cuid())
+  productId String
+  product   Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  tierId    String
+  tier      PartnerTier @relation(fields: [tierId], references: [id], onDelete: Cascade)
+  price     BigInt
+
+  @@unique([productId, tierId])
+}
+
+/// تخفیف پلکانی تعداد؛ productId خالی یعنی قانون عمومی همهٔ محصولات
+model QuantityBreak {
+  id                   String   @id @default(cuid())
+  productId            String?
+  product              Product? @relation(fields: [productId], references: [id], onDelete: Cascade)
+  minQty               Int
+  extraDiscountPercent Int
+  partnerOnly          Boolean  @default(true)
+
+  @@index([productId])
+}
+
+model Address {
+  id            String  @id @default(cuid())
+  userId        String
+  user          User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title         String
+  province      String
+  city          String
+  line          String
+  postalCode    String
+  receiverName  String
+  receiverPhone String
+  isDefault     Boolean @default(false)
+
+  @@index([userId])
+}
+
+model Order {
+  id                   String      @id @default(cuid())
+  number               String      @unique
+  userId               String
+  user                 User        @relation(fields: [userId], references: [id])
+  status               OrderStatus @default(PENDING_PAYMENT)
+  priceMode            PriceMode
+  /// سطح همکار در لحظهٔ خرید (snapshot)
+  tierSlug             String?
+  subtotal             BigInt
+  discountTotal        BigInt      @default(0)
+  shippingCost         BigInt      @default(0)
+  total                BigInt
+  shippingAddress      Json
+  needsOfficialInvoice Boolean     @default(false)
+  economicCode         String?
+  note                 String?
+  /// کد رهگیری مرسوله (پست / پیک)
+  trackingCode         String?
+  items                OrderItem[]
+  payments             Payment[]
+  statusHistory        OrderStatusChange[]
+  invoice              Invoice?
+  paidAt               DateTime?
+  createdAt            DateTime    @default(now())
+  updatedAt            DateTime    @updatedAt
+
+  @@index([userId])
+  @@index([status])
+}
+
+model OrderItem {
+  id              String   @id @default(cuid())
+  orderId         String
+  order           Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId       String
+  product         Product  @relation(fields: [productId], references: [id])
+  productName     String
+  sku             String
+  /// کلید تنوع (مثل A2|S) و برچسب خوانا (رنگ: A2 · فرم: S)
+  variantKey      String?
+  variantLabel    String?
+  quantity        Int
+  retailUnitPrice BigInt
+  unitPrice       BigInt
+  lineTotal       BigInt
+  appliedRules    String[]
+
+  @@index([orderId])
+}
+
+/// فقط پرداخت آنلاین — gateway: zarinpal | zibal | mock | ... (هر درگاهی که در registry ثبت شود)
+model Payment {
+  id          String        @id @default(cuid())
+  orderId     String
+  order       Order         @relation(fields: [orderId], references: [id])
+  gateway     String        @default("zarinpal")
+  amount      BigInt
+  /// شناسهٔ تراکنش درگاه (Authority / trackId / Token ...)
+  authority   String?
+  refId       String?
+  cardPan     String?
+  status      PaymentStatus @default(INITIATED)
+  rawResponse Json?
+  verifiedAt  DateTime?
+  createdAt   DateTime      @default(now())
+
+  @@unique([gateway, authority])
+  @@index([orderId])
+}
+
+/// تنظیمات کلی قابل ویرایش از پنل مدیریت (مثلاً ارسال و قوانین سطح‌بندی)
+model Setting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}
+
+/// کد ورود یک‌بارمصرف — فقط هش کد ذخیره می‌شود
+model OtpCode {
+  id         String    @id @default(cuid())
+  phone      String
+  codeHash   String
+  expiresAt  DateTime
+  attempts   Int       @default(0)
+  consumedAt DateTime?
+  ip         String?
+  createdAt  DateTime  @default(now())
+
+  @@index([phone, createdAt])
+  @@index([ip, createdAt])
+}
+
+/// نشست ورود — فقط هش توکن کوکی ذخیره می‌شود
+model Session {
+  id        String   @id @default(cuid())
+  tokenHash String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  ip        String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+/// تاریخچهٔ تغییر وضعیت سفارش توسط مدیر یا سیستم
+model OrderStatusChange {
+  id        String      @id @default(cuid())
+  orderId   String
+  order     Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  from      OrderStatus
+  to        OrderStatus
+  note      String?
+  changedBy String?
+  createdAt DateTime    @default(now())
+
+  @@index([orderId])
+}
+
+/// تنوع محصول (ترکیب رنگ/فرم/...) با کد کالا، موجودی و قیمت اختیاری جداگانه
+model ProductVariant {
+  id          String   @id @default(cuid())
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  key         String
+  values      String[]
+  sku         String   @unique
+  stock       Int      @default(0)
+  retailPrice BigInt?
+  isActive    Boolean  @default(true)
+  sort        Int      @default(0)
+
+  @@unique([productId, key])
+}
+
+/// عکس محصول — optionValue: مقدار گزینهٔ اول (مثلاً رنگ A2) برای عکس اختصاصی آن رنگ
+model ProductImage {
+  id          String   @id @default(cuid())
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  key         String   @unique
+  alt         String   @default("")
+  optionValue String?
+  width       Int?
+  height      Int?
+  sort        Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  @@index([productId, sort])
+}
+
+/// فاکتور فروش — نسخهٔ ثابت (snapshot) اطلاعات فروشنده، خریدار و اقلام در لحظهٔ صدور؛ تغییرپذیر نیست
+model Invoice {
+  id        String   @id @default(cuid())
+  number    String   @unique
+  orderId   String   @unique
+  order     Order    @relation(fields: [orderId], references: [id])
+  /// SALE: فاکتور فروش | OFFICIAL: رسمی با اطلاعات اقتصادی خریدار
+  type      String   @default("SALE")
+  seller    Json
+  buyer     Json
+  data      Json
+  total     BigInt
+  issuedAt  DateTime @default(now())
+}
+
+/// شمارندهٔ ترتیبی فاکتور برای هر سال شمسی (بدون شماره‌های خالی یا تکراری)
+model InvoiceCounter {
+  year Int @id
+  last Int @default(0)
+}
